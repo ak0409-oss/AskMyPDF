@@ -1,0 +1,5 @@
+{
+  "name": "AskMyPDF",
+  "description": "Powerful PDF RAG tool powered by Gemini. Upload, analyze, and chat with your documents instantly.",
+  "requestFramePermissions": []
+}
