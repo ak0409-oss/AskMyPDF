@@ -103,7 +103,7 @@ const App: React.FC = () => {
     setMessages(prev => [...prev, { role: 'model', content: '' }]);
 
     try {
-      await streamChat([...messages, userMessage], pdfData.text, (chunk) => {
+      await streamChat([...messages, userMessage], pdfData.chunks, text, (chunk) => {
         currentResponse += chunk;
         setMessages(prev => {
           const last = prev[prev.length - 1];
