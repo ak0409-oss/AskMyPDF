@@ -1,3 +1,8 @@
+export interface Chunk {
+  text: string;
+  pageNumber: number;
+  index: number;
+}
 
 export interface Message {
   role: 'user' | 'model';
@@ -7,6 +12,7 @@ export interface Message {
 export interface PDFData {
   name: string;
   text: string;
+  chunks: Chunk[];
   pageCount: number;
   summary?: string;
   timestamp?: number;
