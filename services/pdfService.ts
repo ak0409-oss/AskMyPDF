@@ -26,8 +26,4 @@ export const extractTextFromPDF = async (file: File): Promise<PDFData> => {
     chunks,
     pageCount: pdf.numPages
   };
-<<<<<<< Updated upstream
 };
-=======
-};
->>>>>>> Stashed changes
