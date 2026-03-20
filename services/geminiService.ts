@@ -1,6 +1,7 @@
 import { GoogleGenAI } from "@google/genai";
 import { Message, Chunk } from "../types";
 
+// ✅ CORRECT
 const getAIClient = () => {
   return new GoogleGenAI({ apiKey: import.meta.env.VITE_GEMINI_API_KEY || '' });
 };
