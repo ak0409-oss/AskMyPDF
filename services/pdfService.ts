@@ -1,10 +1,7 @@
-
 import { PDFData, Chunk } from '../types';
 
-// Declare pdfjsLib global variable since we load it via CDN
 declare const pdfjsLib: any;
 
-// Configure PDF.js worker
 pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
 
 export const extractTextFromPDF = async (file: File): Promise<PDFData> => {
@@ -12,22 +9,21 @@ export const extractTextFromPDF = async (file: File): Promise<PDFData> => {
   const pdf = await pdfjsLib.getDocument({ data: arrayBuffer }).promise;
   let fullText = '';
   const chunks: Chunk[] = [];
-  
+
   for (let i = 1; i <= pdf.numPages; i++) {
     const page = await pdf.getPage(i);
+    const content = await page.getTextContent();
     const pageText = content.items.map((item: any) => item.str).join(' ');
-fullText += pageText + '\n';
-if (pageText.trim().length > 50) {
-  chunks.push({ text: pageText, pageNumber: i, index: i - 1 });
-}
-
-    fullText += strings.join(' ') + '\n';
+    fullText += pageText + '\n';
+    if (pageText.trim().length > 50) {
+      chunks.push({ text: pageText, pageNumber: i, index: i - 1 });
+    }
   }
 
   return {
-  name: file.name,
-  text: fullText,
-  chunks,
-  pageCount: pdf.numPages
-};
+    name: file.name,
+    text: fullText,
+    chunks,
+    pageCount: pdf.numPages
+  };
 };
