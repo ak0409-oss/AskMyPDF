@@ -2,8 +2,9 @@ import { GoogleGenAI } from "@google/genai";
 import { Message, Chunk } from "../types";
 
 const getAIClient = () => {
-  return new GoogleGenAI({ apiKey: process.env.API_KEY || '' });
+  return new GoogleGenAI({ apiKey: import.meta.env.VITE_GEMINI_API_KEY || '' });
 };
+
 
 function retrieveTopChunks(question: string, chunks: Chunk[], topK = 4): Chunk[] {
   const qWords = new Set(question.toLowerCase().split(/\s+/).filter(w => w.length > 3));
