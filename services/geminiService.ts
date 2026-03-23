@@ -1,9 +1,4 @@
-import { GoogleGenerativeAI } from "@google/generative-ai";
 import { Message, Chunk } from "../types";
-
-const getAIClient = () => {
-  return new GoogleGenerativeAI(import.meta.env.VITE_GEMINI_API_KEY || '');
-};
 
 function retrieveTopChunks(question: string, chunks: Chunk[], topK = 4): Chunk[] {
   const qWords = new Set(question.toLowerCase().split(/\s+/).filter(w => w.length > 3));
@@ -16,10 +11,15 @@ function retrieveTopChunks(question: string, chunks: Chunk[], topK = 4): Chunk[]
 }
 
 export const generateSummary = async (text: string): Promise<string> => {
-  const genAI = getAIClient();
-  const model = genAI.getGenerativeModel({ model: 'gemini-1.5-flash' });
-  const result = await model.generateContent(`Provide a very concise one-sentence summary (max 15 words) of the following text:\n\n${text.substring(0, 5000)}`);
-  return result.response.text().trim() || "Document analyzed successfully.";
+  const res = await fetch("/api/gemini", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      prompt: `Provide a very concise one-sentence summary (max 15 words) of the following text:\n\n${text.substring(0, 5000)}`,
+    }),
+  });
+  const data = await res.json();
+  return data.text?.trim() || "Document analyzed successfully.";
 };
 
 export const streamChat = async (
@@ -28,28 +28,18 @@ export const streamChat = async (
   question: string,
   onChunk: (text: string) => void
 ) => {
-  const genAI = getAIClient();
-  const model = genAI.getGenerativeModel({
-    model: 'gemini-1.5-flash',
-    systemInstruction: "You are a professional PDF analyst. Use only the provided context to answer. Always cite the page number when referencing information, e.g. (Page 3). If the answer isn't in the context, say so clearly. Use markdown for formatting.",
-  });
-
   const relevant = retrieveTopChunks(question, chunks, 4);
   const context = relevant.map(c => `[Page ${c.pageNumber}]: ${c.text}`).join('\n\n');
 
-  const history = messages.slice(0, -1).map(m => ({
-    role: m.role,
-    parts: [{ text: m.content }],
-  }));
-
-  const chat = model.startChat({ history });
-  const result = await chat.sendMessageStream(`RELEVANT CONTEXT FROM PDF:\n${context}\n\nQuestion: ${question}`);
-
-  let fullResponse = '';
-  for await (const chunk of result.stream) {
-    const text = chunk.text();
-    fullResponse += text;
-    onChunk(text);
-  }
-  return fullResponse;
+  const res = await fetch("/api/gemini", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      prompt: `You are a professional PDF analyst. Use only the provided context to answer. Always cite page numbers. Use markdown for formatting.\n\nRELEVANT CONTEXT FROM PDF:\n${context}\n\nQuestion: ${question}`,
+      history: messages.slice(0, -1).map(m => ({ role: m.role, content: m.content })),
+    }),
+  });
+  const data = await res.json();
+  onChunk(data.text || "");
+  return data.text || "";
 };
