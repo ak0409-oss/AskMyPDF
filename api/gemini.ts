@@ -15,7 +15,8 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       contents: prompt,
     });
 
-    return res.status(200).json({ text: response.text });
+    const text = response.candidates?.[0]?.content?.parts?.[0]?.text ?? '';
+    return res.status(200).json({ text });
   } catch (error: any) {
     console.error('Gemini error:', error);
     return res.status(500).json({ error: error.message || 'Internal server error' });
