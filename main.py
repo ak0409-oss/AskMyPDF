@@ -33,6 +33,7 @@ QDRANT_API_KEY  = os.getenv("QDRANT_API_KEY")
 COLLECTION_NAME = os.getenv("COLLECTION_NAME", "pdf_rag_collection")
 CHUNK_SIZE      = int(os.getenv("CHUNK_SIZE", "1000"))
 CHUNK_OVERLAP   = int(os.getenv("CHUNK_OVERLAP", "100"))
+VECTOR_SIZE     = 3072  # gemini-embedding-001 output dimensions
 
 if not GEMINI_API_KEY:
     raise RuntimeError("GEMINI_API_KEY is not set in .env")
@@ -40,7 +41,6 @@ if not GEMINI_API_KEY:
 # ─── Custom Embeddings via direct REST ──────────────────────────────────────────
 
 class GeminiEmbeddings(Embeddings):
-    # gemini-embedding-001 outputs 768-dim vectors, matches Qdrant collection
     EMBED_URL = (
         "https://generativelanguage.googleapis.com"
         "/v1beta/models/gemini-embedding-001:embedContent"
@@ -118,9 +118,9 @@ def ensure_collection():
     if COLLECTION_NAME not in existing:
         qdrant_client.create_collection(
             collection_name=COLLECTION_NAME,
-            vectors_config=VectorParams(size=768, distance=Distance.COSINE),
+            vectors_config=VectorParams(size=VECTOR_SIZE, distance=Distance.COSINE),
         )
-        print(f"✅ Created collection: {COLLECTION_NAME}")
+        print(f"✅ Created collection: {COLLECTION_NAME} (dim={VECTOR_SIZE})")
     else:
         print(f"📦 Using existing collection: {COLLECTION_NAME}")
 
