@@ -14,7 +14,8 @@ from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 from dotenv import load_dotenv
 
-import google.generativeai as genai
+from google import genai
+from google.genai import types as genai_types
 from openai import OpenAI
 from langchain_community.document_loaders import PyPDFLoader
 from langchain_text_splitters import RecursiveCharacterTextSplitter
@@ -37,31 +38,34 @@ CHUNK_OVERLAP   = int(os.getenv("CHUNK_OVERLAP", "100"))
 if not GEMINI_API_KEY:
     raise RuntimeError("GEMINI_API_KEY is not set in .env")
 
-genai.configure(api_key=GEMINI_API_KEY)
+# ─── Custom Embeddings using new google-genai SDK (v1) ──────────────────────
 
-# ─── Custom Embeddings ───────────────────────────────────────────────────────────
+genai_client = genai.Client(api_key=GEMINI_API_KEY)
 
 class GeminiEmbeddings(Embeddings):
-    """Direct Google Generative AI embeddings using google.generativeai SDK."""
+    """Embeddings via new google-genai SDK which uses the v1 API."""
 
-    def __init__(self, model: str = "models/text-embedding-004"):
+    def __init__(self, model: str = "text-embedding-004"):
         self.model = model
 
     def embed_documents(self, texts: List[str]) -> List[List[float]]:
-        result = genai.embed_content(
-            model=self.model,
-            content=texts,
-            task_type="retrieval_document",
-        )
-        return result["embedding"]
+        embeddings = []
+        for text in texts:
+            response = genai_client.models.embed_content(
+                model=self.model,
+                contents=text,
+                config=genai_types.EmbedContentConfig(task_type="RETRIEVAL_DOCUMENT"),
+            )
+            embeddings.append(response.embeddings[0].values)
+        return embeddings
 
     def embed_query(self, text: str) -> List[float]:
-        result = genai.embed_content(
+        response = genai_client.models.embed_content(
             model=self.model,
-            content=text,
-            task_type="retrieval_query",
+            contents=text,
+            config=genai_types.EmbedContentConfig(task_type="RETRIEVAL_QUERY"),
         )
-        return result["embedding"]
+        return response.embeddings[0].values
 
 
 # ─── Clients ───────────────────────────────────────────────────────────────────
@@ -71,7 +75,7 @@ gemini_client = OpenAI(
     base_url="https://generativelanguage.googleapis.com/v1beta/openai/",
 )
 
-embedder = GeminiEmbeddings(model="models/text-embedding-004")
+embedder = GeminiEmbeddings(model="text-embedding-004")
 
 qdrant_client = QdrantClient(
     url=QDRANT_URL,
@@ -85,7 +89,6 @@ app = FastAPI(title="PDF RAG API", version="2.0.0")
 
 @app.exception_handler(Exception)
 async def global_exception_handler(request: Request, exc: Exception):
-    """Ensure CORS headers are present even on unhandled 500 errors."""
     return JSONResponse(
         status_code=500,
         content={"detail": str(exc)},
@@ -231,7 +234,6 @@ def root():
 
 @app.get("/ping", tags=["Health"])
 def ping():
-    """Lightweight wake-up endpoint for frontend cold-start ping."""
     return {"pong": True}
 
 
