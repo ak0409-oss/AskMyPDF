@@ -6,7 +6,7 @@ Chunks PDFs, stores embeddings in Qdrant, answers questions with Gemini.
 import os
 import json
 import tempfile
-from typing import Optional
+from typing import Optional, List
 
 from fastapi import FastAPI, UploadFile, File, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
@@ -14,11 +14,12 @@ from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 from dotenv import load_dotenv
 
+import google.generativeai as genai
 from openai import OpenAI
-from langchain_openai import OpenAIEmbeddings
 from langchain_community.document_loaders import PyPDFLoader
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 from langchain_qdrant import QdrantVectorStore
+from langchain_core.embeddings import Embeddings
 from qdrant_client import QdrantClient
 from qdrant_client.http.models import Distance, VectorParams
 
@@ -36,23 +37,41 @@ CHUNK_OVERLAP   = int(os.getenv("CHUNK_OVERLAP", "100"))
 if not GEMINI_API_KEY:
     raise RuntimeError("GEMINI_API_KEY is not set in .env")
 
-# ─── Clients ───────────────────────────────────────────────────────────────────
+genai.configure(api_key=GEMINI_API_KEY)
 
-GOOGLE_OPENAI_BASE = "https://generativelanguage.googleapis.com/v1beta/openai/"
+# ─── Custom Embeddings ───────────────────────────────────────────────────────────
+
+class GeminiEmbeddings(Embeddings):
+    """Direct Google Generative AI embeddings using google.generativeai SDK."""
+
+    def __init__(self, model: str = "models/text-embedding-004"):
+        self.model = model
+
+    def embed_documents(self, texts: List[str]) -> List[List[float]]:
+        result = genai.embed_content(
+            model=self.model,
+            content=texts,
+            task_type="retrieval_document",
+        )
+        return result["embedding"]
+
+    def embed_query(self, text: str) -> List[float]:
+        result = genai.embed_content(
+            model=self.model,
+            content=text,
+            task_type="retrieval_query",
+        )
+        return result["embedding"]
+
+
+# ─── Clients ───────────────────────────────────────────────────────────────────
 
 gemini_client = OpenAI(
     api_key=GEMINI_API_KEY,
-    base_url=GOOGLE_OPENAI_BASE,
+    base_url="https://generativelanguage.googleapis.com/v1beta/openai/",
 )
 
-# Use Google's OpenAI-compatible embedding endpoint with text-embedding-004
-# This produces 768-dim vectors, matching our Qdrant collection
-embedder = OpenAIEmbeddings(
-    api_key=GEMINI_API_KEY,
-    base_url=GOOGLE_OPENAI_BASE,
-    model="text-embedding-004",
-    dimensions=768,
-)
+embedder = GeminiEmbeddings(model="models/text-embedding-004")
 
 qdrant_client = QdrantClient(
     url=QDRANT_URL,
