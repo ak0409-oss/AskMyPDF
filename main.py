@@ -43,9 +43,10 @@ gemini_client = OpenAI(
     base_url="https://generativelanguage.googleapis.com/v1beta/openai/"
 )
 
+# GoogleGenerativeAIEmbeddings automatically prepends "models/" — do NOT include it here
 embedder = GoogleGenerativeAIEmbeddings(
     google_api_key=GEMINI_API_KEY,
-    model="models/text-embedding-004"
+    model="text-embedding-004"
 )
 
 qdrant_client = QdrantClient(
