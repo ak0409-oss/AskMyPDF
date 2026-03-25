@@ -1,19 +1,6 @@
 """
 PDF RAG Backend - FastAPI
 Chunks PDFs, stores embeddings in Qdrant, answers questions with Gemini.
-
-Improvements over v1:
-- Page numbers stored in chunk metadata and cited in answers
-- Context formatted as [Page N]: text for grounded citations
-- Keyword overlap re-ranking after dense retrieval
-- Multi-query expansion for broader retrieval coverage
-- Reciprocal Rank Fusion (RRF) to merge multi-query results
-- Tightened system prompt: page citations + markdown formatting
-- QDRANT_API_KEY support for cloud Qdrant (required for Vercel deployment)
-
-Run:
-pip install -r requirements.txt
-uvicorn main:app --reload --port 8000
 """
 
 import os
@@ -36,26 +23,19 @@ from qdrant_client.http.models import Distance, VectorParams
 
 load_dotenv()
 
-# ─── Config ────────────────────────────────────────────────────────────────────────────────
+# ─── Config ────────────────────────────────────────────────────────────────────
 
 GEMINI_API_KEY  = os.getenv("GEMINI_API_KEY")
 QDRANT_URL      = os.getenv("QDRANT_URL", "http://localhost:6333")
-QDRANT_API_KEY  = os.getenv("QDRANT_API_KEY")          # required for cloud Qdrant
+QDRANT_API_KEY  = os.getenv("QDRANT_API_KEY")
 COLLECTION_NAME = os.getenv("COLLECTION_NAME", "pdf_rag_collection")
 CHUNK_SIZE      = int(os.getenv("CHUNK_SIZE", "1000"))
 CHUNK_OVERLAP   = int(os.getenv("CHUNK_OVERLAP", "100"))
 
-# Comma-separated list of allowed origins, e.g. set ALLOWED_ORIGINS in Render env vars
-# Defaults to allowing all Vercel preview URLs + localhost
-ALLOWED_ORIGINS = os.getenv(
-    "ALLOWED_ORIGINS",
-    "https://askmypdf-m7ut.onrender.com,http://localhost:5173,http://localhost:3000"
-)
-
 if not GEMINI_API_KEY:
     raise RuntimeError("GEMINI_API_KEY is not set in .env")
 
-# ─── Clients ────────────────────────────────────────────────────────────────────────
+# ─── Clients ───────────────────────────────────────────────────────────────────
 
 gemini_client = OpenAI(
     api_key=GEMINI_API_KEY,
@@ -67,34 +47,33 @@ embedder = GoogleGenerativeAIEmbeddings(
     model="models/text-embedding-004"
 )
 
-# Supports both local Qdrant (no api_key) and cloud Qdrant (with api_key)
 qdrant_client = QdrantClient(
     url=QDRANT_URL,
-    api_key=QDRANT_API_KEY,   # None is safely ignored by qdrant-client for local
+    api_key=QDRANT_API_KEY,
 )
 
-# ─── App ────────────────────────────────────────────────────────────────────────────────
+# ─── App ───────────────────────────────────────────────────────────────────────
 
 app = FastAPI(title="PDF RAG API", version="2.0.0")
 
-# Parse comma-separated origins and always include wildcard as fallback
-origins = [o.strip() for o in ALLOWED_ORIGINS.split(",") if o.strip()]
-# Also allow all *.vercel.app preview deployments
-origins += ["https://*.vercel.app"]
-
+# IMPORTANT: do NOT mix allow_origins=["*"] with allow_origin_regex —
+# they conflict in Starlette's CORSMiddleware. Use regex only.
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],          # wildcard covers all Vercel preview URLs
-    allow_origin_regex=r"https://.*\.vercel\.app",
+    allow_origins=[
+        "http://localhost:5173",
+        "http://localhost:3000",
+        "https://askmypdf-m7ut.onrender.com",
+    ],
+    allow_origin_regex=r"https://.*\.vercel\.app",  # covers all preview + prod Vercel URLs
     allow_credentials=False,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
-# ─── Helpers ────────────────────────────────────────────────────────────────────────
+# ─── Helpers ───────────────────────────────────────────────────────────────────
 
 def ensure_collection():
-    """Create Qdrant collection if it doesn't exist."""
     existing = [c.name for c in qdrant_client.get_collections().collections]
     if COLLECTION_NAME not in existing:
         qdrant_client.create_collection(
@@ -183,7 +162,7 @@ def reciprocal_rank_fusion(rankings: list[list], k: int = 60) -> list:
     return [doc_map[doc_id] for doc_id in sorted_ids]
 
 
-# ─── Models ────────────────────────────────────────────────────────────────────────
+# ─── Models ────────────────────────────────────────────────────────────────────
 
 class AskRequest(BaseModel):
     question: str
@@ -208,7 +187,7 @@ class StatusResponse(BaseModel):
     qdrant_url: str
 
 
-# ─── Routes ────────────────────────────────────────────────────────────────────────
+# ─── Routes ────────────────────────────────────────────────────────────────────
 
 @app.get("/", tags=["Health"])
 def root():
@@ -223,7 +202,6 @@ def ping():
 
 @app.get("/status", response_model=StatusResponse, tags=["Health"])
 def status():
-    """Check Qdrant connection and collection stats."""
     try:
         ensure_collection()
         info = qdrant_client.get_collection(COLLECTION_NAME)
@@ -239,10 +217,6 @@ def status():
 
 @app.post("/upload", response_model=UploadResponse, tags=["RAG"])
 async def upload_pdf(file: UploadFile = File(...)):
-    """
-    Upload a PDF → chunk → embed → store in Qdrant.
-    Each chunk is tagged with source_filename and page_number metadata.
-    """
     if not file.filename.endswith(".pdf"):
         raise HTTPException(status_code=400, detail="Only PDF files are supported.")
 
@@ -280,10 +254,6 @@ async def upload_pdf(file: UploadFile = File(...)):
 
 @app.post("/ask", response_model=AskResponse, tags=["RAG"])
 def ask(body: AskRequest):
-    """
-    Ask a question → multi-query expansion → retrieve relevant chunks →
-    RRF fusion → keyword re-rank → generate grounded answer with Gemini.
-    """
     if not body.question.strip():
         raise HTTPException(status_code=400, detail="Question cannot be empty.")
 
@@ -321,7 +291,7 @@ def ask(body: AskRequest):
 
 Instructions:
 - Answer ONLY based on the context below. Do not hallucinate or use outside knowledge.
-- Always cite the page number (e.g., \"According to Page 3...\") when referencing information.
+- Always cite the page number (e.g., "According to Page 3...") when referencing information.
 - Be clear, factual, and well-structured. Use markdown formatting with headings and bullet points where helpful.
 - If the context does not contain enough information to answer, say so clearly and mention which aspect is missing.
 - Do not wrap your answer in JSON.
@@ -346,7 +316,6 @@ Context from the document:
 
 @app.delete("/collection", tags=["Admin"])
 def clear_collection():
-    """Delete and recreate the Qdrant collection (clears all documents)."""
     try:
         qdrant_client.delete_collection(COLLECTION_NAME)
         ensure_collection()
