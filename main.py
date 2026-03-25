@@ -37,12 +37,14 @@ CHUNK_OVERLAP   = int(os.getenv("CHUNK_OVERLAP", "100"))
 if not GEMINI_API_KEY:
     raise RuntimeError("GEMINI_API_KEY is not set in .env")
 
-# ─── Custom Embeddings via direct REST call to Google v1 API ──────────────────
+# ─── Custom Embeddings via direct REST ──────────────────────────────────────────
 
 class GeminiEmbeddings(Embeddings):
-    """Direct REST calls to Google Generative Language API v1 for embeddings."""
-
-    EMBED_URL = "https://generativelanguage.googleapis.com/v1/models/text-embedding-004:embedContent"
+    # text-embedding-004 lives under v1beta/models/...:embedContent
+    EMBED_URL = (
+        "https://generativelanguage.googleapis.com"
+        "/v1beta/models/text-embedding-004:embedContent"
+    )
 
     def __init__(self, api_key: str):
         self.api_key = api_key
@@ -57,7 +59,8 @@ class GeminiEmbeddings(Embeddings):
                 "taskType": task_type,
             },
         )
-        resp.raise_for_status()
+        if not resp.ok:
+            raise RuntimeError(f"Embedding API error {resp.status_code}: {resp.text}")
         return resp.json()["embedding"]["values"]
 
     def embed_documents(self, texts: List[str]) -> List[List[float]]:
@@ -276,8 +279,7 @@ async def upload_pdf(file: UploadFile = File(...)):
 
         for chunk in chunks:
             chunk.metadata["source_filename"] = file.filename
-            raw_page = chunk.metadata.get("page")
-            chunk.metadata["page_number"] = (raw_page + 1) if isinstance(raw_page, int) else "unknown"
+            chunk.metadata["page_number"] = (chunk.metadata.get("page", 0) + 1)
 
         vs = get_vector_store()
         vs.add_documents(chunks)
