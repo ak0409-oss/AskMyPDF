@@ -40,10 +40,10 @@ if not GEMINI_API_KEY:
 # ─── Custom Embeddings via direct REST ──────────────────────────────────────────
 
 class GeminiEmbeddings(Embeddings):
-    # text-embedding-004 lives under v1beta/models/...:embedContent
+    # gemini-embedding-001 outputs 768-dim vectors, matches Qdrant collection
     EMBED_URL = (
         "https://generativelanguage.googleapis.com"
-        "/v1beta/models/text-embedding-004:embedContent"
+        "/v1beta/models/gemini-embedding-001:embedContent"
     )
 
     def __init__(self, api_key: str):
@@ -54,7 +54,7 @@ class GeminiEmbeddings(Embeddings):
             self.EMBED_URL,
             params={"key": self.api_key},
             json={
-                "model": "models/text-embedding-004",
+                "model": "models/gemini-embedding-001",
                 "content": {"parts": [{"text": text}]},
                 "taskType": task_type,
             },
