@@ -2,7 +2,7 @@ import React, { useState, useRef, useEffect } from 'react';
 import Uploader from './components/Uploader';
 import ChatMessage from './components/ChatMessage';
 import { Message, PDFData } from './types';
-import { streamChat, generateSummary } from './services/geminiService';
+import { streamChat, generateSummary, pingBackend } from './services/geminiService';
 
 const GeminiLogo = ({ dark }: { dark: boolean }) => (
   <div className={`flex items-center gap-1.5 font-medium ${dark ? 'text-gray-400' : 'text-gray-500'}`}>
@@ -50,11 +50,17 @@ const App: React.FC = () => {
   const [input, setInput] = useState('');
   const [isTyping, setIsTyping] = useState(false);
   const [isParsing, setIsParsing] = useState(false);
+  const [backendReady, setBackendReady] = useState(false);
   const [insightsOpen, setInsightsOpen] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [darkMode, setDarkMode] = useState(false);
 
   const scrollRef = useRef<HTMLDivElement>(null);
+
+  // Wake up Render backend on app load
+  useEffect(() => {
+    pingBackend().then(ok => setBackendReady(ok));
+  }, []);
 
   useEffect(() => {
     if (scrollRef.current) {
@@ -130,7 +136,9 @@ const App: React.FC = () => {
     <div className={`min-h-screen flex flex-col font-['Inter'] relative overflow-x-hidden transition-colors duration-300 ${d ? 'bg-gray-950 text-white' : 'bg-gray-50 text-gray-900'}`}>
       {/* Top Bar */}
       <div className={`text-[10px] py-1.5 text-center font-bold uppercase tracking-widest px-4 border-b z-30 ${d ? 'bg-gray-900 text-gray-500 border-white/5' : 'bg-gray-900 text-gray-400 border-white/5'}`}>
-        Powered by FastAPI + Qdrant + Gemini RAG backend. Page-cited answers.
+        {backendReady
+          ? '🟢 Backend ready — RAG powered by FastAPI + Qdrant + Gemini'
+          : '⏳ Waking up backend… this may take up to 30s on first load'}
       </div>
 
       {/* Header */}
@@ -188,6 +196,11 @@ const App: React.FC = () => {
                 <h2 className={`text-4xl font-black mb-3 tracking-tighter ${d ? 'text-white' : 'text-gray-900'}`}>Interact with your documents</h2>
                 <p className={`text-lg font-medium mb-4 ${d ? 'text-gray-400' : 'text-gray-500'}`}>RAG-powered PDF chat with page-cited answers.</p>
               </div>
+              {!backendReady && (
+                <div className={`mb-4 px-4 py-3 rounded-2xl text-sm font-medium border ${d ? 'bg-yellow-900/30 border-yellow-800 text-yellow-300' : 'bg-yellow-50 border-yellow-200 text-yellow-700'}`}>
+                  ⏳ Backend is waking up… please wait a moment before uploading.
+                </div>
+              )}
               <Uploader onPDFReady={handlePDFReady} isLoading={isParsing} />
             </div>
           </div>

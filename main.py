@@ -36,7 +36,7 @@ from qdrant_client.http.models import Distance, VectorParams
 
 load_dotenv()
 
-# ─── Config ────────────────────────────────────────────────────────────────────
+# ─── Config ────────────────────────────────────────────────────────────────────────────────
 
 GEMINI_API_KEY  = os.getenv("GEMINI_API_KEY")
 QDRANT_URL      = os.getenv("QDRANT_URL", "http://localhost:6333")
@@ -45,10 +45,17 @@ COLLECTION_NAME = os.getenv("COLLECTION_NAME", "pdf_rag_collection")
 CHUNK_SIZE      = int(os.getenv("CHUNK_SIZE", "1000"))
 CHUNK_OVERLAP   = int(os.getenv("CHUNK_OVERLAP", "100"))
 
+# Comma-separated list of allowed origins, e.g. set ALLOWED_ORIGINS in Render env vars
+# Defaults to allowing all Vercel preview URLs + localhost
+ALLOWED_ORIGINS = os.getenv(
+    "ALLOWED_ORIGINS",
+    "https://askmypdf-m7ut.onrender.com,http://localhost:5173,http://localhost:3000"
+)
+
 if not GEMINI_API_KEY:
     raise RuntimeError("GEMINI_API_KEY is not set in .env")
 
-# ─── Clients ───────────────────────────────────────────────────────────────────
+# ─── Clients ────────────────────────────────────────────────────────────────────────
 
 gemini_client = OpenAI(
     api_key=GEMINI_API_KEY,
@@ -66,18 +73,25 @@ qdrant_client = QdrantClient(
     api_key=QDRANT_API_KEY,   # None is safely ignored by qdrant-client for local
 )
 
-# ─── App ───────────────────────────────────────────────────────────────────────
+# ─── App ────────────────────────────────────────────────────────────────────────────────
 
 app = FastAPI(title="PDF RAG API", version="2.0.0")
 
+# Parse comma-separated origins and always include wildcard as fallback
+origins = [o.strip() for o in ALLOWED_ORIGINS.split(",") if o.strip()]
+# Also allow all *.vercel.app preview deployments
+origins += ["https://*.vercel.app"]
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=["*"],          # wildcard covers all Vercel preview URLs
+    allow_origin_regex=r"https://.*\.vercel\.app",
+    allow_credentials=False,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
-# ─── Helpers ───────────────────────────────────────────────────────────────────
+# ─── Helpers ────────────────────────────────────────────────────────────────────────
 
 def ensure_collection():
     """Create Qdrant collection if it doesn't exist."""
@@ -102,11 +116,6 @@ def get_vector_store() -> QdrantVectorStore:
 
 
 def keyword_rerank(query: str, docs: list, top_k: int = 5) -> list:
-    """
-    Re-rank docs by keyword overlap with the query.
-    Inspired by AskMyPDF/services/geminiService.ts retrieveTopChunks().
-    Used as a second-stage ranker on top of dense retrieval results.
-    """
     q_words = set(query.lower().split())
     scored = []
     for doc in docs:
@@ -118,12 +127,6 @@ def keyword_rerank(query: str, docs: list, top_k: int = 5) -> list:
 
 
 def generate_alternative_queries(question: str) -> list[str]:
-    """
-    Use Gemini to generate 3 alternative phrasings of the user question
-    for broader retrieval coverage (multi-query expansion).
-    Returns a list of prompt strings including the original question.
-    Falls back to [question] only if the LLM call fails.
-    """
     system_prompt = """You are a helpful assistant that generates alternative phrasings of a user question to improve document retrieval.
 
 Generate exactly 3 alternative phrasings of the given question. Each should approach the same topic from a different angle — more specific, more general, or using different terminology.
@@ -136,7 +139,6 @@ Return output strictly as a JSON object with key \"prompts\" containing an array
     {\"prompt\": \"string\"}
   ]
 }"""
-
     try:
         response = gemini_client.chat.completions.create(
             model="gemini-2.0-flash",
@@ -148,7 +150,6 @@ Return output strictly as a JSON object with key \"prompts\" containing an array
         )
         raw = json.loads(response.choices[0].message.content)
         prompts = []
-        # Handle {"prompts": [{"prompt": ...}, ...]}
         if isinstance(raw, dict):
             for key in raw:
                 val = raw[key]
@@ -159,27 +160,18 @@ Return output strictly as a JSON object with key \"prompts\" containing an array
                         if isinstance(item, dict) and "prompt" in item
                     ]
                     break
-        # Handle direct list (fallback)
         elif isinstance(raw, list):
             prompts = [item["prompt"] for item in raw if isinstance(item, dict) and "prompt" in item]
     except Exception:
         prompts = []
-
     return [question] + prompts[:3]
 
 
 def reciprocal_rank_fusion(rankings: list[list], k: int = 60) -> list:
-    """
-    Fuse multiple ranked lists of docs using Reciprocal Rank Fusion.
-    Returns a deduplicated list of docs sorted by fused score (highest first).
-    k=60 is the standard smoothing constant.
-    """
     doc_scores: dict[str, float] = {}
     doc_map: dict[str, object] = {}
-
     for ranking in rankings:
         for idx, doc in enumerate(ranking):
-            # Use Qdrant internal _id if available, else fall back to content prefix
             doc_id = str(doc.metadata.get("_id") or doc.page_content[:120])
             rr = 1.0 / (idx + 1 + k)
             if doc_id in doc_scores:
@@ -187,12 +179,11 @@ def reciprocal_rank_fusion(rankings: list[list], k: int = 60) -> list:
             else:
                 doc_scores[doc_id] = rr
                 doc_map[doc_id] = doc
-
     sorted_ids = sorted(doc_scores, key=lambda x: doc_scores[x], reverse=True)
     return [doc_map[doc_id] for doc_id in sorted_ids]
 
 
-# ─── Models ────────────────────────────────────────────────────────────────────
+# ─── Models ────────────────────────────────────────────────────────────────────────
 
 class AskRequest(BaseModel):
     question: str
@@ -217,11 +208,17 @@ class StatusResponse(BaseModel):
     qdrant_url: str
 
 
-# ─── Routes ────────────────────────────────────────────────────────────────────
+# ─── Routes ────────────────────────────────────────────────────────────────────────
 
 @app.get("/", tags=["Health"])
 def root():
     return {"message": "PDF RAG API is running 🚀"}
+
+
+@app.get("/ping", tags=["Health"])
+def ping():
+    """Lightweight wake-up endpoint for frontend cold-start ping."""
+    return {"pong": True}
 
 
 @app.get("/status", response_model=StatusResponse, tags=["Health"])
@@ -266,8 +263,6 @@ async def upload_pdf(file: UploadFile = File(...)):
 
         for chunk in chunks:
             chunk.metadata["source_filename"] = file.filename
-            # PyPDFLoader stores 0-based page index in metadata["page"]
-            # Convert to 1-based page number for display
             raw_page = chunk.metadata.get("page")
             chunk.metadata["page_number"] = (raw_page + 1) if isinstance(raw_page, int) else "unknown"
 
@@ -288,17 +283,13 @@ def ask(body: AskRequest):
     """
     Ask a question → multi-query expansion → retrieve relevant chunks →
     RRF fusion → keyword re-rank → generate grounded answer with Gemini.
-    Answers include page number citations.
     """
     if not body.question.strip():
         raise HTTPException(status_code=400, detail="Question cannot be empty.")
 
     vs = get_vector_store()
-
-    # Step 1: Generate alternative queries for broader retrieval
     all_queries = generate_alternative_queries(body.question)
 
-    # Step 2: Dense retrieval for each query (fetch more per query, fuse later)
     per_query_k = max(body.top_k * 2, 8)
     rankings = []
     for query in all_queries:
@@ -312,13 +303,9 @@ def ask(body: AskRequest):
             sources=[],
         )
 
-    # Step 3: Reciprocal Rank Fusion across all query results
     fused_docs = reciprocal_rank_fusion(rankings)
-
-    # Step 4: Keyword overlap re-rank on fused pool, keep top_k
     top_docs = keyword_rerank(body.question, fused_docs, top_k=body.top_k)
 
-    # Step 5: Build context with page citations (inspired by AskMyPDF geminiService.ts)
     context_parts = []
     for doc in top_docs:
         page = doc.metadata.get("page_number", "?")
@@ -330,7 +317,6 @@ def ask(body: AskRequest):
         for doc in top_docs
     })
 
-    # Step 6: Generate answer strictly from retrieved context
     system_prompt = f"""You are an intelligent AI assistant that answers user queries strictly using the provided context from PDF documents.
 
 Instructions:
