@@ -8,14 +8,13 @@ import json
 import tempfile
 from typing import Optional, List
 
+import requests as http_requests
 from fastapi import FastAPI, UploadFile, File, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 from dotenv import load_dotenv
 
-from google import genai
-from google.genai import types as genai_types
 from openai import OpenAI
 from langchain_community.document_loaders import PyPDFLoader
 from langchain_text_splitters import RecursiveCharacterTextSplitter
@@ -38,34 +37,34 @@ CHUNK_OVERLAP   = int(os.getenv("CHUNK_OVERLAP", "100"))
 if not GEMINI_API_KEY:
     raise RuntimeError("GEMINI_API_KEY is not set in .env")
 
-# ─── Custom Embeddings using new google-genai SDK (v1) ──────────────────────
-
-genai_client = genai.Client(api_key=GEMINI_API_KEY)
+# ─── Custom Embeddings via direct REST call to Google v1 API ──────────────────
 
 class GeminiEmbeddings(Embeddings):
-    """Embeddings via new google-genai SDK which uses the v1 API."""
+    """Direct REST calls to Google Generative Language API v1 for embeddings."""
 
-    def __init__(self, model: str = "text-embedding-004"):
-        self.model = model
+    EMBED_URL = "https://generativelanguage.googleapis.com/v1/models/text-embedding-004:embedContent"
+
+    def __init__(self, api_key: str):
+        self.api_key = api_key
+
+    def _embed(self, text: str, task_type: str) -> List[float]:
+        resp = http_requests.post(
+            self.EMBED_URL,
+            params={"key": self.api_key},
+            json={
+                "model": "models/text-embedding-004",
+                "content": {"parts": [{"text": text}]},
+                "taskType": task_type,
+            },
+        )
+        resp.raise_for_status()
+        return resp.json()["embedding"]["values"]
 
     def embed_documents(self, texts: List[str]) -> List[List[float]]:
-        embeddings = []
-        for text in texts:
-            response = genai_client.models.embed_content(
-                model=self.model,
-                contents=text,
-                config=genai_types.EmbedContentConfig(task_type="RETRIEVAL_DOCUMENT"),
-            )
-            embeddings.append(response.embeddings[0].values)
-        return embeddings
+        return [self._embed(t, "RETRIEVAL_DOCUMENT") for t in texts]
 
     def embed_query(self, text: str) -> List[float]:
-        response = genai_client.models.embed_content(
-            model=self.model,
-            contents=text,
-            config=genai_types.EmbedContentConfig(task_type="RETRIEVAL_QUERY"),
-        )
-        return response.embeddings[0].values
+        return self._embed(text, "RETRIEVAL_QUERY")
 
 
 # ─── Clients ───────────────────────────────────────────────────────────────────
@@ -75,7 +74,7 @@ gemini_client = OpenAI(
     base_url="https://generativelanguage.googleapis.com/v1beta/openai/",
 )
 
-embedder = GeminiEmbeddings(model="text-embedding-004")
+embedder = GeminiEmbeddings(api_key=GEMINI_API_KEY)
 
 qdrant_client = QdrantClient(
     url=QDRANT_URL,
