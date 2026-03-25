@@ -1,29 +1,15 @@
-import { PDFData, Chunk } from '../types';
+import { PDFData } from '../types';
+import { uploadPDF } from './geminiService';
 
-declare const pdfjsLib: any;
-
-pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
-
+// Upload the PDF to the FastAPI backend for server-side processing.
+// The backend handles text extraction, chunking, embedding, and Qdrant indexing.
+// The frontend only needs the filename back for display purposes.
 export const extractTextFromPDF = async (file: File): Promise<PDFData> => {
-  const arrayBuffer = await file.arrayBuffer();
-  const pdf = await pdfjsLib.getDocument({ data: arrayBuffer }).promise;
-  let fullText = '';
-  const chunks: Chunk[] = [];
-
-  for (let i = 1; i <= pdf.numPages; i++) {
-    const page = await pdf.getPage(i);
-    const content = await page.getTextContent();
-    const pageText = content.items.map((item: any) => item.str).join(' ');
-    fullText += pageText + '\n';
-    if (pageText.trim().length > 50) {
-      chunks.push({ text: pageText, pageNumber: i, index: i - 1 });
-    }
-  }
-
+  const filename = await uploadPDF(file);
   return {
-    name: file.name,
-    text: fullText,
-    chunks,
-    pageCount: pdf.numPages
+    name: filename,
+    text: "",       // text lives in Qdrant now, not the browser
+    chunks: [],     // chunks live in Qdrant now, not the browser
+    pageCount: 0,   // not needed for backend RAG
   };
 };

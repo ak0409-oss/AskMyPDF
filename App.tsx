@@ -81,11 +81,11 @@ const App: React.FC = () => {
       saveToRecent(dataWithSummary);
       setMessages([{
         role: 'model',
-        content: `I've analyzed **${data.name}**. I'm ready to help you with anything related to this document!`
+        content: `I've analyzed **${data.name}** and indexed it in the knowledge base. Ask me anything about this document — I'll cite page numbers in my answers!`
       }]);
     } catch (e) {
       setPdfData(data);
-      setMessages([{ role: 'model', content: "Document parsed! How can I help?" }]);
+      setMessages([{ role: 'model', content: "Document uploaded! How can I help?" }]);
     } finally {
       setIsParsing(false);
     }
@@ -110,7 +110,7 @@ const App: React.FC = () => {
     } catch (error) {
       setMessages(prev => [
         ...prev.slice(0, -1),
-        { role: 'model', content: 'Processing error. Please verify your Gemini API key.' }
+        { role: 'model', content: 'Something went wrong. Please check the backend connection and try again.' }
       ]);
     } finally {
       setIsTyping(false);
@@ -130,7 +130,7 @@ const App: React.FC = () => {
     <div className={`min-h-screen flex flex-col font-['Inter'] relative overflow-x-hidden transition-colors duration-300 ${d ? 'bg-gray-950 text-white' : 'bg-gray-50 text-gray-900'}`}>
       {/* Top Bar */}
       <div className={`text-[10px] py-1.5 text-center font-bold uppercase tracking-widest px-4 border-b z-30 ${d ? 'bg-gray-900 text-gray-500 border-white/5' : 'bg-gray-900 text-gray-400 border-white/5'}`}>
-        All processing happens in your browser. No files are stored on our servers.
+        Powered by FastAPI + Qdrant + Gemini RAG backend. Page-cited answers.
       </div>
 
       {/* Header */}
@@ -167,7 +167,7 @@ const App: React.FC = () => {
                       <span className={`w-3 h-3 bg-white rounded-full shadow transition-transform ${d ? 'translate-x-4' : 'translate-x-0'}`} />
                     </span>
                   </button>
-                  <button className={`w-full text-left px-4 py-2 text-sm font-medium ${d ? 'hover:bg-gray-700 text-white' : 'hover:bg-gray-50 text-gray-700'}`}>Model: Flash 2.5</button>
+                  <button className={`w-full text-left px-4 py-2 text-sm font-medium ${d ? 'hover:bg-gray-700 text-white' : 'hover:bg-gray-50 text-gray-700'}`}>Model: Gemini 2.0 Flash</button>
                   <button className={`w-full text-left px-4 py-2 text-sm font-medium ${d ? 'hover:bg-gray-700 text-white' : 'hover:bg-gray-50 text-gray-700'}`}>Language: EN</button>
                   <div className={`h-[1px] my-1 ${d ? 'bg-white/10' : 'bg-gray-100'}`}></div>
                   <button className="w-full text-left px-4 py-2 text-sm font-bold text-red-500 hover:bg-red-50">Logout</button>
@@ -186,7 +186,7 @@ const App: React.FC = () => {
             <div className="w-full max-w-xl text-center">
               <div className="mb-8">
                 <h2 className={`text-4xl font-black mb-3 tracking-tighter ${d ? 'text-white' : 'text-gray-900'}`}>Interact with your documents</h2>
-                <p className={`text-lg font-medium mb-4 ${d ? 'text-gray-400' : 'text-gray-500'}`}>The smartest way to chat with PDFs and presentations.</p>
+                <p className={`text-lg font-medium mb-4 ${d ? 'text-gray-400' : 'text-gray-500'}`}>RAG-powered PDF chat with page-cited answers.</p>
               </div>
               <Uploader onPDFReady={handlePDFReady} isLoading={isParsing} />
             </div>
@@ -203,9 +203,9 @@ const App: React.FC = () => {
                 <div className="min-w-0">
                   <div className="flex items-center gap-2">
                     <h3 className={`font-bold truncate max-w-[200px] ${d ? 'text-white' : 'text-gray-900'}`}>{pdfData.name}</h3>
-                    <span className={`text-[10px] px-2 py-0.5 rounded-full font-bold ${d ? 'bg-gray-700 text-gray-400' : 'bg-gray-100 text-gray-500'}`}>{pdfData.pageCount} Pages</span>
+                    <span className={`text-[10px] px-2 py-0.5 rounded-full font-bold ${d ? 'bg-gray-700 text-gray-400' : 'bg-gray-100 text-gray-500'}`}>Indexed ✓</span>
                   </div>
-                  <p className={`text-xs font-medium italic mt-0.5 line-clamp-1 ${d ? 'text-gray-500' : 'text-gray-500'}`}>"{pdfData.summary}"</p>
+                  <p className={`text-xs font-medium italic mt-0.5 line-clamp-1 ${d ? 'text-gray-500' : 'text-gray-500'}`}>"{pdfData.summary || 'Ready for questions'}"</p>
                 </div>
               </div>
               <div className="flex items-center gap-3">
@@ -230,7 +230,7 @@ const App: React.FC = () => {
                   {messages.map((msg, idx) => (
                     <ChatMessage key={idx} message={msg} darkMode={d} />
                   ))}
-                  {isTyping && messages[messages.length - 1].role === 'user' && (
+                  {isTyping && messages[messages.length - 1]?.role === 'user' && (
                     <div className="flex justify-start mb-6">
                       <div className={`rounded-2xl px-5 py-3 border flex items-center gap-2 ${d ? 'bg-gray-800 border-white/10' : 'bg-gray-50 border-gray-100'}`}>
                         <div className="flex gap-1.5">
@@ -263,14 +263,14 @@ const App: React.FC = () => {
                       type="text"
                       value={input}
                       onChange={(e) => setInput(e.target.value)}
-                      placeholder="Ask a question..."
+                      placeholder="Ask a question about your document..."
                       className={`flex-1 bg-transparent border-none focus:ring-0 py-3 font-medium placeholder:text-gray-400 ${d ? 'text-white' : 'text-gray-800'}`}
                       disabled={isTyping}
                     />
                     <div className="flex items-center gap-2 pr-1">
                       <div className={`hidden sm:flex items-center gap-1.5 px-3 py-1.5 rounded-xl border text-[9px] font-black uppercase tracking-widest ${d ? 'bg-gray-700 border-gray-600 text-gray-400' : 'bg-white border-gray-200 text-gray-500'}`}>
                         <span className="w-1.5 h-1.5 bg-green-500 rounded-full"></span>
-                        Gemini 2.5 Flash
+                        Gemini 2.0 Flash
                       </div>
                       <button
                         type="submit"
@@ -326,7 +326,7 @@ const App: React.FC = () => {
       <footer className={`py-10 px-6 text-center border-t transition-colors ${d ? 'bg-gray-900 border-white/10' : 'bg-white border-gray-200'}`}>
         <div className="max-w-6xl mx-auto flex flex-col items-center gap-3">
           <GeminiLogo dark={d} />
-          <p className={`text-[9px] font-bold uppercase tracking-widest ${d ? 'text-gray-600' : 'text-gray-400'}`}>No data is used to train Gemini; processing is session-based only.</p>
+          <p className={`text-[9px] font-bold uppercase tracking-widest ${d ? 'text-gray-600' : 'text-gray-400'}`}>RAG backend powered by Qdrant + FastAPI. Answers grounded in your document.</p>
           <div className="flex items-center gap-8 mt-4">
             {["Privacy", "Terms", "Feedback", "Github"].map((link, i) => (
               <a key={i} href="#" className={`text-[10px] font-bold uppercase tracking-[0.2em] hover:text-blue-500 transition-colors ${d ? 'text-gray-500' : 'text-gray-500'}`}>{link}</a>
