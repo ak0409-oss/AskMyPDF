@@ -9,6 +9,7 @@ Improvements over v1:
 - Multi-query expansion for broader retrieval coverage
 - Reciprocal Rank Fusion (RRF) to merge multi-query results
 - Tightened system prompt: page citations + markdown formatting
+- QDRANT_API_KEY support for cloud Qdrant (required for Vercel deployment)
 
 Run:
 pip install -r requirements.txt
@@ -37,11 +38,12 @@ load_dotenv()
 
 # ─── Config ────────────────────────────────────────────────────────────────────
 
-GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
-QDRANT_URL = os.getenv("QDRANT_URL", "http://localhost:6333")
+GEMINI_API_KEY  = os.getenv("GEMINI_API_KEY")
+QDRANT_URL      = os.getenv("QDRANT_URL", "http://localhost:6333")
+QDRANT_API_KEY  = os.getenv("QDRANT_API_KEY")          # required for cloud Qdrant
 COLLECTION_NAME = os.getenv("COLLECTION_NAME", "pdf_rag_collection")
-CHUNK_SIZE = int(os.getenv("CHUNK_SIZE", "1000"))
-CHUNK_OVERLAP = int(os.getenv("CHUNK_OVERLAP", "100"))
+CHUNK_SIZE      = int(os.getenv("CHUNK_SIZE", "1000"))
+CHUNK_OVERLAP   = int(os.getenv("CHUNK_OVERLAP", "100"))
 
 if not GEMINI_API_KEY:
     raise RuntimeError("GEMINI_API_KEY is not set in .env")
@@ -58,7 +60,11 @@ embedder = GoogleGenerativeAIEmbeddings(
     model="models/text-embedding-004"
 )
 
-qdrant_client = QdrantClient(url=QDRANT_URL)
+# Supports both local Qdrant (no api_key) and cloud Qdrant (with api_key)
+qdrant_client = QdrantClient(
+    url=QDRANT_URL,
+    api_key=QDRANT_API_KEY,   # None is safely ignored by qdrant-client for local
+)
 
 # ─── App ───────────────────────────────────────────────────────────────────────
 
@@ -113,20 +119,23 @@ def keyword_rerank(query: str, docs: list, top_k: int = 5) -> list:
 
 def generate_alternative_queries(question: str) -> list[str]:
     """
-    Use Gemini to generate 3-4 alternative phrasings of the user question
+    Use Gemini to generate 3 alternative phrasings of the user question
     for broader retrieval coverage (multi-query expansion).
     Returns a list of prompt strings including the original question.
+    Falls back to [question] only if the LLM call fails.
     """
     system_prompt = """You are a helpful assistant that generates alternative phrasings of a user question to improve document retrieval.
 
 Generate exactly 3 alternative phrasings of the given question. Each should approach the same topic from a different angle — more specific, more general, or using different terminology.
 
-Return output strictly as a JSON array:
-[
-  {"prompt": "string"},
-  {"prompt": "string"},
-  {"prompt": "string"}
-]"""
+Return output strictly as a JSON object with key \"prompts\" containing an array:
+{
+  \"prompts\": [
+    {\"prompt\": \"string\"},
+    {\"prompt\": \"string\"},
+    {\"prompt\": \"string\"}
+  ]
+}"""
 
     try:
         response = gemini_client.chat.completions.create(
@@ -138,20 +147,21 @@ Return output strictly as a JSON array:
             ],
         )
         raw = json.loads(response.choices[0].message.content)
-        # Handle both {"prompts": [...]} and direct array wrapped in object
-        if isinstance(raw, list):
-            prompts = [item["prompt"] for item in raw if "prompt" in item]
-        elif isinstance(raw, dict):
-            # Try common wrapper keys
+        prompts = []
+        # Handle {"prompts": [{"prompt": ...}, ...]}
+        if isinstance(raw, dict):
             for key in raw:
                 val = raw[key]
                 if isinstance(val, list):
-                    prompts = [item["prompt"] for item in val if isinstance(item, dict) and "prompt" in item]
+                    prompts = [
+                        item["prompt"]
+                        for item in val
+                        if isinstance(item, dict) and "prompt" in item
+                    ]
                     break
-            else:
-                prompts = []
-        else:
-            prompts = []
+        # Handle direct list (fallback)
+        elif isinstance(raw, list):
+            prompts = [item["prompt"] for item in raw if isinstance(item, dict) and "prompt" in item]
     except Exception:
         prompts = []
 
@@ -169,7 +179,8 @@ def reciprocal_rank_fusion(rankings: list[list], k: int = 60) -> list:
 
     for ranking in rankings:
         for idx, doc in enumerate(ranking):
-            doc_id = doc.metadata.get("_id") or doc.page_content[:100]
+            # Use Qdrant internal _id if available, else fall back to content prefix
+            doc_id = str(doc.metadata.get("_id") or doc.page_content[:120])
             rr = 1.0 / (idx + 1 + k)
             if doc_id in doc_scores:
                 doc_scores[doc_id] += rr
@@ -255,7 +266,7 @@ async def upload_pdf(file: UploadFile = File(...)):
 
         for chunk in chunks:
             chunk.metadata["source_filename"] = file.filename
-            # PyPDFLoader stores page index (0-based) in metadata["page"]
+            # PyPDFLoader stores 0-based page index in metadata["page"]
             # Convert to 1-based page number for display
             raw_page = chunk.metadata.get("page")
             chunk.metadata["page_number"] = (raw_page + 1) if isinstance(raw_page, int) else "unknown"
@@ -324,7 +335,7 @@ def ask(body: AskRequest):
 
 Instructions:
 - Answer ONLY based on the context below. Do not hallucinate or use outside knowledge.
-- Always cite the page number (e.g., "According to Page 3...") when referencing information.
+- Always cite the page number (e.g., \"According to Page 3...\") when referencing information.
 - Be clear, factual, and well-structured. Use markdown formatting with headings and bullet points where helpful.
 - If the context does not contain enough information to answer, say so clearly and mention which aspect is missing.
 - Do not wrap your answer in JSON.
