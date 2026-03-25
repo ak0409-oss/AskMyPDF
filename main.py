@@ -8,8 +8,9 @@ import json
 import tempfile
 from typing import Optional
 
-from fastapi import FastAPI, UploadFile, File, HTTPException
+from fastapi import FastAPI, UploadFile, File, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 from dotenv import load_dotenv
 
@@ -55,6 +56,17 @@ qdrant_client = QdrantClient(
 # ─── App ───────────────────────────────────────────────────────────────────────
 
 app = FastAPI(title="PDF RAG API", version="2.0.0")
+
+
+@app.exception_handler(Exception)
+async def global_exception_handler(request: Request, exc: Exception):
+    """Ensure CORS headers are present even on unhandled 500 errors."""
+    return JSONResponse(
+        status_code=500,
+        content={"detail": str(exc)},
+        headers={"Access-Control-Allow-Origin": "*"},
+    )
+
 
 # IMPORTANT: do NOT mix allow_origins=["*"] with allow_origin_regex —
 # they conflict in Starlette's CORSMiddleware. Use regex only.
@@ -229,6 +241,9 @@ async def upload_pdf(file: UploadFile = File(...)):
         loader = PyPDFLoader(file_path=tmp_path)
         docs = loader.load()
 
+        if not docs:
+            raise HTTPException(status_code=422, detail="PDF appears to be empty or unreadable.")
+
         splitter = RecursiveCharacterTextSplitter(
             chunk_size=CHUNK_SIZE,
             chunk_overlap=CHUNK_OVERLAP,
@@ -248,6 +263,10 @@ async def upload_pdf(file: UploadFile = File(...)):
             filename=file.filename,
             chunks_stored=len(chunks),
         )
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to process PDF: {str(e)}")
     finally:
         os.unlink(tmp_path)
 
