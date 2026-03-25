@@ -15,9 +15,9 @@ from pydantic import BaseModel
 from dotenv import load_dotenv
 
 from openai import OpenAI
+from langchain_openai import OpenAIEmbeddings
 from langchain_community.document_loaders import PyPDFLoader
 from langchain_text_splitters import RecursiveCharacterTextSplitter
-from langchain_google_genai import GoogleGenerativeAIEmbeddings
 from langchain_qdrant import QdrantVectorStore
 from qdrant_client import QdrantClient
 from qdrant_client.http.models import Distance, VectorParams
@@ -38,15 +38,20 @@ if not GEMINI_API_KEY:
 
 # ─── Clients ───────────────────────────────────────────────────────────────────
 
+GOOGLE_OPENAI_BASE = "https://generativelanguage.googleapis.com/v1beta/openai/"
+
 gemini_client = OpenAI(
     api_key=GEMINI_API_KEY,
-    base_url="https://generativelanguage.googleapis.com/v1beta/openai/"
+    base_url=GOOGLE_OPENAI_BASE,
 )
 
-# Use models/embedding-001 — stable, supported embedding model via Google Generative AI
-embedder = GoogleGenerativeAIEmbeddings(
-    google_api_key=GEMINI_API_KEY,
-    model="models/embedding-001"
+# Use Google's OpenAI-compatible embedding endpoint with text-embedding-004
+# This produces 768-dim vectors, matching our Qdrant collection
+embedder = OpenAIEmbeddings(
+    api_key=GEMINI_API_KEY,
+    base_url=GOOGLE_OPENAI_BASE,
+    model="text-embedding-004",
+    dimensions=768,
 )
 
 qdrant_client = QdrantClient(
@@ -69,8 +74,6 @@ async def global_exception_handler(request: Request, exc: Exception):
     )
 
 
-# IMPORTANT: do NOT mix allow_origins=["*"] with allow_origin_regex —
-# they conflict in Starlette's CORSMiddleware. Use regex only.
 app.add_middleware(
     CORSMiddleware,
     allow_origins=[
@@ -78,7 +81,7 @@ app.add_middleware(
         "http://localhost:3000",
         "https://askmypdf-m7ut.onrender.com",
     ],
-    allow_origin_regex=r"https://.*\.vercel\.app",  # covers all preview + prod Vercel URLs
+    allow_origin_regex=r"https://.*\.vercel\.app",
     allow_credentials=False,
     allow_methods=["*"],
     allow_headers=["*"],
